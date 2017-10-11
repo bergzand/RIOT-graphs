@@ -33,7 +33,7 @@ def retrieve_stats_from(options, day):
     """
     now = datetime.now()
     date_past = datetime(year=now.year, month=now.month, day=now.day, hour=3, tzinfo=timezone.utc) - timedelta(days=day)
-    g = GitHub()
+    g = GitHub(token=options.api_token)
     # get the latest commit since time_start
     code, commit_data = g.repos[options.riot_repo].commits.get(until=date_past.isoformat(),
                                                                since=(date_past - timedelta(days=1)).isoformat())
@@ -112,6 +112,7 @@ class GraphConf(object):
             self.influx_database  = parser.get('influxdb', 'database')
             self.influx_batch_size = parser.getint('influxdb', 'batch_size')
 
+            self.api_token          = parser.get('github', 'api_token', fallback=None)
 
             self.riot_ci = parser.get('riot', 'ci-url')
             self.riot_repo = parser.get('riot', 'repo')
