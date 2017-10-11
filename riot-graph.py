@@ -23,28 +23,25 @@ def retrieve_stats(options):
         logging.debug("Retrieved latest stats from {}".format(sizes['timestamp']))
         return sizes
 
-def retrieve_stats_from(options, time_start):
+def retrieve_stats_from(options, day):
     """
     Retrieves first measurement from time_start
 
     :param options:     options object
-    :param time_start:  timedate from which to start searching. None for grabbing the latest
+    :param day:         integer from which to start searching. None for grabbing the latest
     :return:            dict with the statistics
     """
-
-    if time_start:
-        assert(type(time_start) == datetime)
-        g = GitHub()
-        # get the latest commit since time_start
-        code, commit_data = g.repos[options.riot_repo].commits.get(until=time_start.isoformat(),
-                                                                   since=(time_start - timedelta(days=1)).isoformat(),
-                                                                   per_page=10)
-        if code != 200:
-            logging.error("Could not get commit info from github")
+    now = datetime.now()
+    date_past = datetime(year=now.year, month=now.month, day=now.day, hour=3, tzinfo=timezone.utc) - timedelta(days=day)
+    g = GitHub()
+    # get the latest commit since time_start
+    code, commit_data = g.repos[options.riot_repo].commits.get(until=date_past.isoformat(),
+                                                               since=(date_past - timedelta(days=1)).isoformat())
+    if code != 200:
+        logging.error("Could not get commit info from github")
 
     # bruteforce the actual commit with statistics since I'm unable to find the correct commit reliably
     for commit in commit_data:
-
         data = requests.get("{}/{}/master/{}/{}".format(options.riot_ci,
                                                         options.riot_repo,
                                                         commit['sha'],
@@ -58,28 +55,39 @@ def retrieve_stats_from(options, time_start):
             logging.warning("Noting retrieved for {}".format(commit['sha']))
     return None
 
+
+def retrieve_history(config, history):
+    stats = []
+    for day in range(history, 0):
+        stat = retrieve_stats_from(config, day)
+        if stat:
+            stats.append(stat)
+    return stats
+
+
 def push_to_influx(config, stats):
     # we've got our data, now push it to influxdb
     measurements = []
-    for test in stats['sizes'].keys():
-        for board in stats['sizes'][test].keys():
-            logging.debug(" board: {}: test: {}, result: {}".format(board, test, stats['sizes'][test][board]))
-            stat = stats['sizes'][test][board]
-            ms_data = {
-                'measurement': 'build_sizes',
-                'tags': {
-                    'test': test,
-                    'board': board,
-                },
-                'time': stats['timestamp'].isoformat(),
-                'fields': {
-                    'bss': int(stat['bss']),
-                    'data': int(stat['data']),
-                    'text': int(stat['text']),
-                    'dec': int(stat['dec']),
+    for day in stats:
+        for test in day['sizes'].keys():
+            for board in day['sizes'][test].keys():
+                logging.debug(" board: {}: test: {}, result: {}".format(board, test, day['sizes'][test][board]))
+                build_stat = day['sizes'][test][board]
+                ms_data = {
+                    'measurement': 'build_sizes',
+                    'tags': {
+                        'test': test,
+                        'board': board,
+                    },
+                    'time': day['timestamp'].isoformat(),
+                    'fields': {
+                        'bss': int(build_stat['bss']),
+                        'data': int(build_stat['data']),
+                        'text': int(build_stat['text']),
+                        'dec': int(build_stat['dec']),
+                    }
                 }
-            }
-            measurements.append(ms_data)
+                measurements.append(ms_data)
 
     c = influxdb.InfluxDBClient(config.influx_host, config.influx_port, database=config.influx_database)
     c.write_points(measurements, batch_size=config.influx_batch_size)
@@ -142,22 +150,28 @@ Options:
     config = GraphConf(args['--file'])
     config.load_config()
     days = None
-    try:
-        if args['--days']:
+    if args['--days']:
+        try:
             days = int(args['--days'])
-    except:
-        raise SystemExit('days in the past should be an integer')
-    date = None
-    if days:
-        now = datetime.now()
-        date = datetime(year=now.year, month=now.month, day=now.day, hour=3, tzinfo=timezone.utc) - timedelta(days=days)
-        stats = retrieve_stats_from(config, date)
+        except:
+            raise SystemExit('days in the past should be an integer')
+    history = None
+    if args['--history']:
+        try:
+            history = int(history['--days'])
+        except:
+            raise SystemExit('days in the past should be an integer')
+    stats = []
+    if history:
+        logging.info("Grabbing build history since {} days back".format(history))
+        stats = retrieve_history(config, history)
+    elif days:
+        stats = [retrieve_stats_from(config, days)]
     else:
-        stats = retrieve_stats(config)
+        stats = [retrieve_stats(config)]
 
     if not stats:
         raise SystemExit("No data found")
-
     push_to_influx(config, stats)
 
 
