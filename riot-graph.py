@@ -58,7 +58,7 @@ def retrieve_stats_from(options, day):
 
 def retrieve_history(config, history):
     stats = []
-    for day in range(history, 0):
+    for day in range(history, 0, -1):
         stat = retrieve_stats_from(config, day)
         if stat:
             stats.append(stat)
@@ -158,9 +158,9 @@ Options:
     history = None
     if args['--history']:
         try:
-            history = int(history['--days'])
+            history = int(args['--history'])
         except:
-            raise SystemExit('days in the past should be an integer')
+            raise SystemExit('history should be an integer')
     stats = []
     if history:
         logging.info("Grabbing build history since {} days back".format(history))
