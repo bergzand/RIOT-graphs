@@ -58,6 +58,32 @@ def retrieve_stats_from(options, time_start):
             logging.warning("Noting retrieved for {}".format(commit['sha']))
     return None
 
+def push_to_influx(config, stats):
+    # we've got our data, now push it to influxdb
+    measurements = []
+    for test in stats['sizes'].keys():
+        for board in stats['sizes'][test].keys():
+            logging.debug(" board: {}: test: {}, result: {}".format(board, test, stats['sizes'][test][board]))
+            stat = stats['sizes'][test][board]
+            ms_data = {
+                'measurement': 'build_sizes',
+                'tags': {
+                    'test': test,
+                    'board': board,
+                },
+                'time': stats['timestamp'].isoformat(),
+                'fields': {
+                    'bss': int(stat['bss']),
+                    'data': int(stat['data']),
+                    'text': int(stat['text']),
+                    'dec': int(stat['dec']),
+                }
+            }
+            measurements.append(ms_data)
+
+    c = influxdb.InfluxDBClient(config.influx_host, config.influx_port, database=config.influx_database)
+    c.write_points(measurements, batch_size=config.influx_batch_size)
+
 class GraphConf(object):
     """
     RIOT-graph configuration class
@@ -75,6 +101,8 @@ class GraphConf(object):
         try:
             self.influx_host      = parser.get('influxdb', 'hostname')
             self.influx_port      = parser.getint('influxdb', 'port')
+            self.influx_database  = parser.get('influxdb', 'database')
+            self.influx_batch_size = parser.getint('influxdb', 'batch_size')
 
 
             self.riot_ci = parser.get('riot', 'ci-url')
@@ -129,6 +157,8 @@ Options:
 
     if not stats:
         raise SystemExit("No data found")
+
+    push_to_influx(config, stats)
 
 
 
