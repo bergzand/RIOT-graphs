@@ -53,16 +53,18 @@ def retrieve_stats_from(options, day):
                          hour=3,
                          tzinfo=timezone.utc) - timedelta(days=day)
     date_since = date_past - timedelta(days=1)
+
     # clone repo if necessary
     try:
         git.Repo(options.riot_repo_path)
     except git.exc.NoSuchPathError:
         git.Git().clone(options.riot_repo, options.riot_repo_path)
-
+    # Open the repo
     g = git.Git(options.riot_repo_path)
+
     # get the latest commit since time_start
-    commits = g.log("--merges",
-                    '--format=%H\t%cd\t%s',
+    commits = g.log('--merges',
+                    '--format=%H\x1f%cd\x1f%s',  # Use unit separator between data
                     '--date=iso8601',
                     "--before={}".format(date_past.isoformat()),
                     "--since={}".format(date_since.isoformat())
@@ -71,17 +73,17 @@ def retrieve_stats_from(options, day):
         commits.splitlines()),
         date_past.isoformat(),
         (date_past - timedelta(days=1)).isoformat()))
-    # Bruteforce the actual commit with statistics
-    # since I'm unable to find the correct commit reliably
+
+    # Iterate over the possible last commits of the day
     for commit in commits.splitlines():
-        hash, date, msg = commit.split('\t', 2)
+        hash, date, msg = commit.split(chr(31), 2)
         logging.debug("Trying hash: {}, at {} with message: {}".format(hash,
                                                                        date,
                                                                        msg))
         stats = retrieve_stats(options, hash)
         if stats:
             pr_num = re.findall(r'\d+', msg)[0]
-            pr_date = datetime.strptime(date, "%Y-%m-%d %H:%M:%S %z")
+            pr_date = datetime.strptime(date, '%Y-%m-%d %H:%M:%S %z')
             stats['meta'] = {'pr': pr_num, 'date': pr_date}
             return stats
     logging.warning("Nothing retrieved for {}".format(date_past))
