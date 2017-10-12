@@ -3,27 +3,27 @@
 import configparser
 from datetime import datetime, timedelta, timezone
 import email.utils as eut
-import json
 import logging
 from logging import StreamHandler
-from pprint import pprint
+import re
 
+import git
 import influxdb
 import requests
-from agithub.GitHub import GitHub
 from docopt import docopt
 
 
-def retrieve_stats(options):
-    data = requests.get("{}/{}/master/latest/{}".format(options.riot_ci,
-                                                        options.riot_repo,
+def retrieve_stats(options, hash):
+    sizes = None
+    data = requests.get("{}/RIOT-OS/RIOT/master/{}/{}".format(options.riot_ci,
+                                                        hash,
                                                         options.data_file))
     if data.status_code == 200:
         sizes = data.json()
         ts = datetime(*eut.parsedate(data.headers['Last-Modified'])[:7])
         sizes['timestamp'] = ts
         logging.debug("Retrieved latest stats from {}".format(ts))
-        return sizes
+    return sizes
 
 
 def retrieve_stats_from(options, day):
@@ -32,7 +32,6 @@ def retrieve_stats_from(options, day):
 
     :param options:     options object
     :param day:         integer from which to start searching.
-                        None for grabbing the latest
     :return:            dict with the statistics
     """
     now = datetime.now()
@@ -41,30 +40,38 @@ def retrieve_stats_from(options, day):
                          day=now.day,
                          hour=3,
                          tzinfo=timezone.utc) - timedelta(days=day)
-    g = GitHub(token=options.api_token)
-    # get the latest commit since time_start
-    code, commit_data = g.repos[options.riot_repo].commits.get(
-            until=date_past.isoformat(),
-            since=(date_past - timedelta(days=1)).isoformat())
-    if code != 200:
-        logging.error("Could not get commit info from github")
+    # clone repo if necessary
+    try:
+        git.Repo(options.riot_repo_path)
+    except git.exc.NoSuchPathError:
+        git.Git().clone(options.riot_repo, options.riot_repo_path)
 
+    g = git.Git(options.riot_repo_path)
+    # get the latest commit since time_start
+    commits = g.log("--merges",
+                    '--format=%H␞%cd␞%s', # Use Unit separator between fields
+                    '--date=iso8601',
+                    "--before={}".format(date_past.isoformat()),
+                    "--since={}".format((date_past - timedelta(days=1)).isoformat())
+                    )
+    logging.debug("Found {} commits between {} and {}".format(len(
+        commits.splitlines()),
+        date_past.isoformat(),
+        (date_past - timedelta(days=1)).isoformat()))
     # bruteforce the actual commit with statistics
     # since I'm unable to find the correct commit reliably
-    for commit in commit_data:
-        data = requests.get("{}/{}/master/{}/{}".format(options.riot_ci,
-                                                        options.riot_repo,
-                                                        commit['sha'],
-                                                        options.data_file))
-        if data.status_code == 200:
-            sizes = data.json()
-            ts = datetime(*eut.parsedate(data.headers['Last-Modified'])[:7])
-            sizes['timestamp'] = ts
-            logging.debug("Fetched stats for {} from {}".format(commit['sha'],
-                                                                ts))
-            return sizes
-        else:
-            logging.warning("Noting retrieved for {}".format(commit['sha']))
+    for commit in commits.splitlines():
+        hash, date, msg = commit.split('␞', 2)
+        logging.debug("Trying hash: {}, at {} with message: {}".format(hash,
+                                                                       date,
+                                                                       msg))
+        stats = retrieve_stats(options, hash)
+        if stats:
+            pr_num = re.findall(r'\d+', msg)[0]
+            pr_date = datetime.strptime(date, "%Y-%m-%d %H:%M:%S %z")
+            stats['meta'] = {'pr': pr_num, 'date': pr_date}
+            return stats
+    logging.warning("Nothing retrieved for {}".format(date_past))
     return None
 
 
@@ -77,17 +84,17 @@ def retrieve_history(config, history):
     return stats
 
 
-def push_to_influx(config, stats):
+def push_to_influx(config, stats, noop):
     # we've got our data, now push it to influxdb
     measurements = []
     for day in stats:
         for test in day['sizes'].keys():
             for board in day['sizes'][test].keys():
                 build_stat = day['sizes'][test][board]
-                logging.debug(" board: {}: test: {}, result: {}"
-                              .format(board,
-                                      test,
-                                      build_stat))
+                #logging.debug(" board: {}: test: {}, result: {}"
+                #              .format(board,
+                #                      test,
+                #                      build_stat))
 
                 ms_data = {
                     'measurement': 'build_sizes',
@@ -104,12 +111,25 @@ def push_to_influx(config, stats):
                     }
                 }
                 measurements.append(ms_data)
-
+        meta = day['meta']
+        logging.debug("Adding PR event info for PR: {}".format(meta['pr']))
+        event = {
+                'measurement': 'pr_events',
+                'time': meta['date'].isoformat(),
+                'fields': {
+                    'pr_num': int(meta['pr']),
+                    'event': "Merged <a "
+                             "href=\"https://github.com/RIOT-OS/RIOT/pull/{0}\">"
+                             "#{0}</a>".format(meta['pr'])
+                }
+            }
+        measurements.append(event)
     c = influxdb.InfluxDBClient(config.influx_host,
                                 config.influx_port,
                                 database=config.influx_database)
     try:
-        c.write_points(measurements, batch_size=config.influx_batch_size)
+        if not noop:
+            c.write_points(measurements, batch_size=config.influx_batch_size)
     except requests.exceptions.ConnectionError:
         logging.critical("Unable to connect to influxdb at {} "
                      "on port {}".format(config.influx_host,
@@ -134,11 +154,13 @@ class GraphConf(object):
             self.influx_host = parser.get('influxdb', 'hostname')
             self.influx_port = parser.getint('influxdb', 'port')
             self.influx_database = parser.get('influxdb', 'database')
-            self.influx_batch_size = parser.getint('influxdb', 'batch_size')
-            self.api_token = parser.get('github', 'api_token',
-                                        fallback=None)
+            self.influx_batch_size = parser.getint('influxdb', 'batch_size',
+                                                   fallback=20)
+
             self.riot_ci = parser.get('riot', 'ci-url')
             self.riot_repo = parser.get('riot', 'repo')
+            self.riot_repo_path = parser.get('riot', 'repo_path',
+                                             fallback="./RIOT")
             self.data_file = parser.get('riot', 'size-file')
         except configparser.NoOptionError as e:
             raise SystemExit('Config error in {}: {}'.format(self.config, e))
@@ -146,7 +168,8 @@ class GraphConf(object):
 
 def main():
     usage = """
-Usage: riot-graph.py [--cron|--debug] [--history=<N>|--days=<N>] <config>
+Usage: riot-graph.py [--cron|--debug] [--history=<N>|--days=<N>] [--noop] 
+                     <config>
        riot-graph.py -V
        riot-graph.py -h
 
@@ -159,6 +182,7 @@ Options:
   -H, --history=<N>             Try to retrieve the full measurement history
                                 starting at day N in the past
   -d, --days=<N>                Retrieve day N in the past from now
+  -n, --noop                    Don't write anything to the database
 
 """
     args = docopt(usage, version="0.1")
@@ -190,22 +214,22 @@ Options:
             history = int(args['--history'])
         except:
             raise SystemExit('history should be an integer')
-    stats = []
     if history:
         logging.info("Fetching build history since {}"
                      " days in the past".format(history))
         stats = retrieve_history(config, history)
     elif days:
         logging.info("Fetching build information from {}"
-                     " days in the past".format(history))
+                     " days in the past".format(days))
         stats = [retrieve_stats_from(config, days)]
     else:
         logging.info("Fetching the latest build information")
-        stats = [retrieve_stats(config)]
+        stats = [retrieve_stats(config, 'latest')]
 
     if not stats:
         raise SystemExit("No data found")
-    push_to_influx(config, stats)
+    logging.debug("{} measurements ready to push to influx".format(len(stats)))
+    push_to_influx(config, stats, args['--noop'])
 
 
 if __name__ == '__main__':
