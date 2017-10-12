@@ -14,10 +14,20 @@ from docopt import docopt
 
 
 def retrieve_stats(options, hash):
+    """
+    Retrieve statistics from the RIOT CI server
+
+    :param GraphConf options: Configuration
+    :param str hash:          Hash of the commit to retrieve,
+                              "latest" to retrieve the latest nightly
+    :return:                  Dict with the build statistics
+    :rtype: dict
+    """
     sizes = None
-    data = requests.get("{}/RIOT-OS/RIOT/master/{}/{}".format(options.riot_ci,
-                                                        hash,
-                                                        options.data_file))
+    data = requests.get("{}/RIOT-OS/RIOT/master"
+                        "/{}/{}".format(options.riot_ci,
+                                        hash,
+                                        options.data_file))
     if data.status_code == 200:
         sizes = data.json()
         ts = datetime(*eut.parsedate(data.headers['Last-Modified'])[:7])
@@ -30,9 +40,11 @@ def retrieve_stats_from(options, day):
     """
     Retrieves first measurement from time_start
 
-    :param options:     options object
-    :param day:         integer from which to start searching.
-    :return:            dict with the statistics
+    :param GraphConf options:   options object
+    :param int day:             integer from which to start searching.
+    :return:                    Statistics
+    :return:                    None, if there are no statistics for that day
+    :rtype: dict
     """
     now = datetime.now()
     date_past = datetime(year=now.year,
@@ -40,6 +52,7 @@ def retrieve_stats_from(options, day):
                          day=now.day,
                          hour=3,
                          tzinfo=timezone.utc) - timedelta(days=day)
+    date_since = date_past - timedelta(days=1)
     # clone repo if necessary
     try:
         git.Repo(options.riot_repo_path)
@@ -49,19 +62,19 @@ def retrieve_stats_from(options, day):
     g = git.Git(options.riot_repo_path)
     # get the latest commit since time_start
     commits = g.log("--merges",
-                    '--format=%H␞%cd␞%s', # Use Unit separator between fields
+                    '--format=%H\t%cd\t%s',
                     '--date=iso8601',
                     "--before={}".format(date_past.isoformat()),
-                    "--since={}".format((date_past - timedelta(days=1)).isoformat())
+                    "--since={}".format(date_since.isoformat())
                     )
     logging.debug("Found {} commits between {} and {}".format(len(
         commits.splitlines()),
         date_past.isoformat(),
         (date_past - timedelta(days=1)).isoformat()))
-    # bruteforce the actual commit with statistics
+    # Bruteforce the actual commit with statistics
     # since I'm unable to find the correct commit reliably
     for commit in commits.splitlines():
-        hash, date, msg = commit.split('␞', 2)
+        hash, date, msg = commit.split('\t', 2)
         logging.debug("Trying hash: {}, at {} with message: {}".format(hash,
                                                                        date,
                                                                        msg))
@@ -76,6 +89,14 @@ def retrieve_stats_from(options, day):
 
 
 def retrieve_history(config, history):
+    """
+    Retrieves the full history beginning of a number of days in the past
+
+    :param GraphConf config:    Configuration class
+    :param int history:         Integer with the number of days in the past
+    :return:                    list of dicts
+    :rtype: list
+    """
     stats = []
     for day in range(history, 0, -1):
         stat = retrieve_stats_from(config, day)
@@ -85,16 +106,24 @@ def retrieve_history(config, history):
 
 
 def push_to_influx(config, stats, noop):
+    """
+    Remap and push data to the influx database
+
+    :param GraphConf config:    Configuration class
+    :param dict stats:          Dictionary with the statistics
+    :param bool noop:           No data is written when True
+    :return:                    None
+    """
     # we've got our data, now push it to influxdb
     measurements = []
     for day in stats:
         for test in day['sizes'].keys():
             for board in day['sizes'][test].keys():
                 build_stat = day['sizes'][test][board]
-                #logging.debug(" board: {}: test: {}, result: {}"
-                #              .format(board,
-                #                      test,
-                #                      build_stat))
+                logging.debug(" board: {}: test: {}, result: {}"
+                              .format(board,
+                                      test,
+                                      build_stat))
 
                 ms_data = {
                     'measurement': 'build_sizes',
@@ -118,8 +147,8 @@ def push_to_influx(config, stats, noop):
                 'time': meta['date'].isoformat(),
                 'fields': {
                     'pr_num': int(meta['pr']),
-                    'event': "Merged <a "
-                             "href=\"https://github.com/RIOT-OS/RIOT/pull/{0}\">"
+                    'event': "Merged <a href="
+                             "\"https://github.com/RIOT-OS/RIOT/pull/{0}\">"
                              "#{0}</a>".format(meta['pr'])
                 }
             }
@@ -132,8 +161,8 @@ def push_to_influx(config, stats, noop):
             c.write_points(measurements, batch_size=config.influx_batch_size)
     except requests.exceptions.ConnectionError:
         logging.critical("Unable to connect to influxdb at {} "
-                     "on port {}".format(config.influx_host,
-                                         config.influx_port))
+                         "on port {}".format(config.influx_host,
+                                             config.influx_port))
 
 
 class GraphConf(object):
@@ -144,9 +173,17 @@ class GraphConf(object):
     """
 
     def __init__(self, config):
+        """
+        Instatiate config object with configuration file
+
+        :param config: Path to the configuration file
+        """
         self.config = config
 
     def load_config(self):
+        """
+        Load and parse the configuration file
+        """
         parser = configparser.ConfigParser()
         parser.read(self.config)
 
@@ -168,7 +205,7 @@ class GraphConf(object):
 
 def main():
     usage = """
-Usage: riot-graph.py [--cron|--debug] [--history=<N>|--days=<N>] [--noop] 
+Usage: riot-graph.py [--cron|--debug] [--history=<N>|--days=<N>] [--noop]
                      <config>
        riot-graph.py -V
        riot-graph.py -h
