@@ -117,7 +117,7 @@ class RiotGraph(object):
         # Get the last valid Full stats (build + PR) from a day
         stats = self.fetch_stats_from(day)
         if stats:
-            self.push_to_influx(stats.get_influx_format(), noop=True)
+            self.push_to_influx(stats.get_influx_format())
 
     def _install_repo(self):
         """
