@@ -43,15 +43,9 @@ class RiotGraph(object):
         Retrieves the full history beginning of a number of days in the past
 
         :param int history:         Integer with the number of days in the past
-        :return:                    list of dicts
-        :rtype: list
         """
-        stats = []
         for day in range(history, 0, -1):
-            stat = self.fetch_stats_from(day)
-            if stat:
-                stats.append(stat)
-        return stats
+            self.push_last_of_day(day)
 
     def fetch_stats_from(self, day):
         """
@@ -117,7 +111,8 @@ class RiotGraph(object):
         # Get the last valid Full stats (build + PR) from a day
         stats = self.fetch_stats_from(day)
         if stats:
-            self.push_to_influx(stats.get_influx_format())
+            self.push_to_influx(stats.get_influx_format(self.config.main_builds,
+                                                        self.config.main_events))
 
     def _install_repo(self):
         """
@@ -186,7 +181,7 @@ class Statistic(object):
         self.build_stats = build_stats
         self.event = event
 
-    def get_influx_format(self):
+    def get_influx_format(self, builds=True, events=True):
         """
         Format these statistics to influx compatible
 
@@ -195,11 +190,13 @@ class Statistic(object):
         """
         # Convert build statistics to influxdb dict list
         measurements = []
-        for build in self.build_stats.iter_measures():
-            measurements.append(build)
-        logging.debug("Adding PR event info for PR: {}".format(self.event.get_title()))
-        if self.event:
-            measurements.append(self.event.get_influx_format())
+        if builds:
+            for build in self.build_stats.iter_measures():
+                measurements.append(build)
+        if events:
+            logging.debug("Adding PR event info for PR: {}".format(self.event.get_title()))
+            if self.event:
+                measurements.append(self.event.get_influx_format())
         logging.info("Retrieved {} measurements including PR events".format(len(measurements)))
         return measurements
 
@@ -334,6 +331,8 @@ class GraphConf(object):
         parser.read(self.config)
 
         try:
+            self.main_events = parser.getboolean('main', 'events', fallback=True)
+            self.main_builds = parser.getboolean('main', 'builds', fallback=True)
             self.influx_host = parser.get('influxdb', 'hostname')
             self.influx_port = parser.getint('influxdb', 'port')
             self.influx_database = parser.get('influxdb', 'database')

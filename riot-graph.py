@@ -58,7 +58,8 @@ Options:
     if history:
         logging.info("Fetching build history since {}"
                      " days in the past".format(history))
-        pass
+        graphs.retrieve_history(history)
+
     elif days:
         logging.info("Fetching build information from {}"
                      " days in the past".format(days))
