@@ -308,7 +308,7 @@ class Event(object):
             logging.warning("No information found for #{}".format(self.pr))
 
     @staticmethod
-    def _format_descr(description, width=40):
+    def _format_descr(description, width=32):
         return '<br>'.join(textwrap.wrap(description, width))
 
 class GraphConf(object):
