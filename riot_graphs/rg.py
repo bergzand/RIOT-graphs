@@ -284,10 +284,10 @@ class Event(object):
             'time': self.get_time().isoformat(),
             'fields': {
                 'pr_num': int(self.get_title()),
-                'title': "<a href="
+                'title': "<a target=\"_blank\" href="
                          "\"https://github.com/RIOT-OS/RIOT/pull/{0}\">"
                          "#{0}</a>".format(self.get_title()),
-                'event': "Merged <a href="
+                'event': "Merged <a target=\"_blank\" href="
                          "\"https://github.com/RIOT-OS/RIOT/pull/{0}\">"
                          "#{0}</a>".format(self.get_title()),
                 'description': self.get_description()
