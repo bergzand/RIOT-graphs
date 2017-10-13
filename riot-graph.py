@@ -7,6 +7,8 @@ import logging
 from logging import StreamHandler
 import re
 
+from riot_graphs.rg import RiotGraph
+
 import git
 import influxdb
 import requests
@@ -167,44 +169,6 @@ def push_to_influx(config, stats, noop):
                                              config.influx_port))
 
 
-class GraphConf(object):
-    """
-    RIOT-graph configuration class
-
-    Provides methods for parsing and retrieving config entries
-    """
-
-    def __init__(self, config):
-        """
-        Instatiate config object with configuration file
-
-        :param config: Path to the configuration file
-        """
-        self.config = config
-
-    def load_config(self):
-        """
-        Load and parse the configuration file
-        """
-        parser = configparser.ConfigParser()
-        parser.read(self.config)
-
-        try:
-            self.influx_host = parser.get('influxdb', 'hostname')
-            self.influx_port = parser.getint('influxdb', 'port')
-            self.influx_database = parser.get('influxdb', 'database')
-            self.influx_batch_size = parser.getint('influxdb', 'batch_size',
-                                                   fallback=20)
-
-            self.riot_ci = parser.get('riot', 'ci-url')
-            self.riot_repo = parser.get('riot', 'repo')
-            self.riot_repo_path = parser.get('riot', 'repo_path',
-                                             fallback="./RIOT")
-            self.data_file = parser.get('riot', 'size-file')
-        except configparser.NoOptionError as e:
-            raise SystemExit('Config error in {}: {}'.format(self.config, e))
-
-
 def main():
     usage = """
 Usage: riot-graph.py [--cron|--debug] [--history=<N>|--days=<N>] [--noop]
@@ -239,8 +203,7 @@ Options:
     logger.addHandler(streamlogger)
 
     # Parse configuration file
-    config = GraphConf(args['<config>'])
-    config.load_config()
+    graphs = RiotGraph(args['<config>'])
     days = None
     if args['--days']:
         try:
@@ -256,19 +219,14 @@ Options:
     if history:
         logging.info("Fetching build history since {}"
                      " days in the past".format(history))
-        stats = retrieve_history(config, history)
+        pass
     elif days:
         logging.info("Fetching build information from {}"
                      " days in the past".format(days))
-        stats = [retrieve_stats_from(config, days)]
+        graphs.push_last_of_day(days)
     else:
         logging.info("Fetching the latest build information")
-        stats = [retrieve_stats(config, 'latest')]
-
-    if not stats:
-        raise SystemExit("No data found")
-    logging.debug("{} measurements ready to push to influx".format(len(stats)))
-    push_to_influx(config, stats, args['--noop'])
+        graphs.push_last_of_day(0)
 
 
 if __name__ == '__main__':
