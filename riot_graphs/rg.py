@@ -13,20 +13,24 @@ from agithub.GitHub import GitHub
 
 class RiotGraph(object):
 
-    def __init__(self, config):
+    def __init__(self, config, noop=False):
         self.measurements = []
         self.config = GraphConf(config)
         self.config.load_config()
         self.g = None
+        self.noop = bool(noop)
         self._install_repo()
         self.c = influxdb.InfluxDBClient(self.config.influx_host,
                                          self.config.influx_port,
                                          database=self.config.influx_database)
         self.github = GitHub(token=self.config.token)
 
-    def push_to_influx(self, measurements, noop=False):
+    def set_noop(self, noop):
+        self.noop = bool(noop)
+
+    def push_to_influx(self, measurements):
         try:
-            if not noop:
+            if not self.noop:
                 self.c.write_points(measurements, batch_size=self.config.influx_batch_size)
         except requests.exceptions.ConnectionError:
             logging.error("Unable to connect to influxdb at {} "

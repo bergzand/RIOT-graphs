@@ -204,6 +204,7 @@ Options:
 
     # Parse configuration file
     graphs = RiotGraph(args['<config>'])
+    graphs.set_noop(args['--noop'])
     days = None
     if args['--days']:
         try:
