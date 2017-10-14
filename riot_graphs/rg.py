@@ -23,7 +23,7 @@ class RiotGraph(object):
         self.c = influxdb.InfluxDBClient(self.config.influx_host,
                                          self.config.influx_port,
                                          self.config.influx_user,
-                                         self.config.influx_passwd,
+                                         self.config.influx_password,
                                          database=self.config.influx_database)
         self.github = GitHub(token=self.config.token)
 
