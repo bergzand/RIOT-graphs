@@ -22,6 +22,8 @@ class RiotGraph(object):
         self._install_repo()
         self.c = influxdb.InfluxDBClient(self.config.influx_host,
                                          self.config.influx_port,
+                                         self.config.influx_user,
+                                         self.config.influx_passwd,
                                          database=self.config.influx_database)
         self.github = GitHub(token=self.config.token)
 
@@ -331,10 +333,17 @@ class GraphConf(object):
         parser.read(self.config)
 
         try:
-            self.main_events = parser.getboolean('main', 'events', fallback=True)
-            self.main_builds = parser.getboolean('main', 'builds', fallback=True)
+            self.main_events = parser.getboolean('main', 'events',
+                                                 fallback=True)
+            self.main_builds = parser.getboolean('main', 'builds',
+                                                 fallback=True)
+
             self.influx_host = parser.get('influxdb', 'hostname')
             self.influx_port = parser.getint('influxdb', 'port')
+            self.influx_user = parser.get('influxdb', 'username',
+                                          fallback=None)
+            self.influx_password = parser.get('influxdb', 'password',
+                                              fallback=None)
             self.influx_database = parser.get('influxdb', 'database')
             self.influx_batch_size = parser.getint('influxdb', 'batch_size',
                                                    fallback=20)
