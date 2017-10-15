@@ -127,7 +127,8 @@ class RiotGraph(object):
         :return:
         """
         try:
-            results = self.c.query("SELECT sha FROM pr_events ORDER BY time DESC  LIMIT 1")
+            results = self.c.query("SELECT hash FROM pr_events ORDER BY time "
+                                   "DESC  LIMIT 1")
         except requests.exceptions.ConnectionError as e:
             logging.error("Failed to connect to InfluxDB: {}".format(e))
             return None
@@ -135,7 +136,7 @@ class RiotGraph(object):
             logging.error("Failed to query InfluxDB: {}".format(e))
             return None
         try:
-            last_sha = next(results.get_points())
+            last_sha = next(results.get_points())['hash']
         except StopIteration:
             return 0
         commits = self.get_commits_since_sha(last_sha)
