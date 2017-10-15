@@ -69,7 +69,7 @@ class RiotGraph(object):
 
         # Update the repo
         self._update_repo()
-        commits = self.get_commits(date_since, date_before)
+        commits = self.get_commits_between(date_since, date_before)
 
         # Iterate over the possible last commits of the day
         for commit in commits:
@@ -77,7 +77,7 @@ class RiotGraph(object):
             if build_stats:
                 pr_num = re.findall(r'\d+', commit['msg'])[0]
                 pr_date = commit['date']
-                event = Event(pr_num, pr_date)
+                event = Event(pr_num, commit['hash'], pr_date)
                 event.fetch_description(self.github, self.config.riot_repo)
                 return Statistic(build_stats, event)
         logging.warning("Nothing retrieved for {}".format(date_since))
@@ -116,6 +116,39 @@ class RiotGraph(object):
             self.push_to_influx(stats.get_influx_format(self.config.main_builds,
                                                         self.config.main_events))
 
+    def push_refresh(self):
+        """
+        push_refresh updates the git repo and pushes new merges and builds to
+        the influxdb server.
+
+        Queries the last PR stored in influxdb first, then checks the git log
+        for merges since that PR and processes any PR's and merges since the
+        last stored PR.
+        :return:
+        """
+        try:
+            results = self.c.query("SELECT sha FROM pr_events ORDER BY time DESC  LIMIT 1")
+        except requests.exceptions.ConnectionError as e:
+            logging.error("Failed to connect to InfluxDB: {}".format(e))
+            return
+        except influxdb.exceptions.InfluxDBClientError as e:
+            logging.error("Failed to query InfluxDB: {}".format(e))
+            return
+        last_sha = next(results.get_points())
+        commits = self.get_commits_since_sha(last_sha)
+        data = []
+        for commit in commits:
+            pr_num = re.findall(r'\d+', commit['msg'])[0]
+            pr_date = commit['date']
+            event = Event(pr_num, commit['hash'], pr_date)
+            event.fetch_description(self.github, self.config.riot_repo)
+            data.append(event.get_influx_format())
+            build_stats = self.fetch_stats(commit['hash'])
+            if self.config.main_builds and build_stats:
+                for build in self.build_stats.iter_measures():
+                    data.append(build.get_influx_format())
+        self.push_to_influx(data)
+
     def _install_repo(self):
         """
         Initialize the repo object
@@ -140,7 +173,14 @@ class RiotGraph(object):
         """
         self.g.pull("-q")
 
-    def get_commits(self, start_time, stop_time):
+    def get_commits_since_sha(self, sha):
+        commits = self.g.log('--merges',
+                             '--format=%H\x1f%cd\x1f%s',  # Use unit separator between data
+                             '--date=iso8601',
+                             "{}..HEAD".format(sha))
+        return RiotGraph.parse_commits(commits)
+
+    def get_commits_between(self, start_time, stop_time):
         """
         Returns all commits from the repo between two datetimes
 
@@ -160,6 +200,10 @@ class RiotGraph(object):
         logging.debug("Found {} commits between {} and {}".format(len(commits.splitlines()),
                                                                   start_time.isoformat(),
                                                                   stop_time.isoformat()))
+        return RiotGraph.parse_commits(commits)
+
+    @staticmethod
+    def parse_commits(commits):
         commit_data = []
         for commit_line in commits.splitlines():
             #TODO: fix shadowing of hash
@@ -192,10 +236,10 @@ class Statistic(object):
         """
         # Convert build statistics to influxdb dict list
         measurements = []
-        if builds:
+        if builds and self.build_stats:
             for build in self.build_stats.iter_measures():
                 measurements.append(build)
-        if events:
+        if events and self.event:
             logging.debug("Adding PR event info for PR: {}".format(self.event.get_title()))
             if self.event:
                 measurements.append(self.event.get_influx_format())
@@ -266,8 +310,9 @@ class Build(object):
 
 
 class Event(object):
-    def __init__(self, pr, timestamp):
+    def __init__(self, pr, sha, timestamp):
         self.pr = int(pr)
+        self.sha = sha
         self.description = ''
         self.timestamp = timestamp
 
@@ -283,6 +328,7 @@ class Event(object):
             'time': self.get_time().isoformat(),
             'fields': {
                 'pr_num': int(self.get_title()),
+                'hash': self.get_hash(),
                 'title': "<a target=\"_blank\" href="
                          "\"https://github.com/RIOT-OS/RIOT/pull/{0}\">"
                          "#{0}</a>".format(self.get_title()),
@@ -294,6 +340,9 @@ class Event(object):
         }
         logging.debug("Formatted PR #{}: {}".format(self.get_title(), self.get_description()))
         return event
+
+    def get_hash(self):
+        return self.sha
 
     def get_description(self):
         return self.description
