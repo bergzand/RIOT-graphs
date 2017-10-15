@@ -134,7 +134,10 @@ class RiotGraph(object):
         except influxdb.exceptions.InfluxDBClientError as e:
             logging.error("Failed to query InfluxDB: {}".format(e))
             return None
-        last_sha = next(results.get_points())
+        try:
+            last_sha = next(results.get_points())
+        except StopIteration:
+            return 0
         commits = self.get_commits_since_sha(last_sha)
         data = []
         for commit in commits:
