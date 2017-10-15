@@ -25,5 +25,5 @@ class RiotServer(object):
 
     def run(self):
         self.app.run(host=self.args['--host'],
-                     port=self.args['--port'],
+                     port=int(self.args['--port']),
                      debug=self.args['--debug'])
