@@ -5,7 +5,7 @@ class RiotServer(object):
 
     @staticmethod
     def hello():
-        return "hello world"
+        return "hello"
 
 
     def update(self):
@@ -24,4 +24,6 @@ class RiotServer(object):
         self.app.add_url_rule('/update', 'update', self.update)
 
     def run(self):
-        self.app.run(host='::1', port=8080, debug=True)
+        self.app.run(host=self.args['--host'],
+                     port=self.args['--port'],
+                     debug=self.args['--debug'])
