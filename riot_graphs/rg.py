@@ -130,10 +130,10 @@ class RiotGraph(object):
             results = self.c.query("SELECT sha FROM pr_events ORDER BY time DESC  LIMIT 1")
         except requests.exceptions.ConnectionError as e:
             logging.error("Failed to connect to InfluxDB: {}".format(e))
-            return
+            return None
         except influxdb.exceptions.InfluxDBClientError as e:
             logging.error("Failed to query InfluxDB: {}".format(e))
-            return
+            return None
         last_sha = next(results.get_points())
         commits = self.get_commits_since_sha(last_sha)
         data = []
@@ -148,6 +148,7 @@ class RiotGraph(object):
                 for build in self.build_stats.iter_measures():
                     data.append(build.get_influx_format())
         self.push_to_influx(data)
+        return len(data)
 
     def _install_repo(self):
         """
