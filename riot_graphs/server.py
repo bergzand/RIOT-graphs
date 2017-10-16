@@ -5,7 +5,7 @@ class RiotServer(object):
 
     @staticmethod
     def hello():
-        return "hello"
+        return "RIOT CI graphing application"
 
 
     def update(self):

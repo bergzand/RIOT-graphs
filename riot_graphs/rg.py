@@ -139,6 +139,7 @@ class RiotGraph(object):
             last_sha = next(results.get_points())['hash']
         except StopIteration:
             return 0
+        self._update_repo()
         commits = self.get_commits_since_sha(last_sha)
         data = []
         for commit in commits:
